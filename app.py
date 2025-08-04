@@ -1,79 +1,56 @@
 from flask import Flask, request, render_template_string
 import xml.etree.ElementTree as ET
-import pandas as pd
-import os
 
 app = Flask(__name__)
 
-# HTML básico com upload
-HTML_FORM = """
+FORM_HTML = """
 <!doctype html>
-<title>Upload de XML</title>
-<h2>Enviar XML da Carteira do Fundo</h2>
+<title>Upload XML</title>
+<h2>Enviar XML da Carteira</h2>
 <form method=post enctype=multipart/form-data>
   <input type=file name=xmlfile>
-  <input type=submit value=Enviar>
+  <input type=submit value=Analisar>
 </form>
 {% if resultado %}
-  <h3>Resultado da Análise:</h3>
+  <h3>Resultado:</h3>
   <pre>{{ resultado }}</pre>
 {% endif %}
 """
 
 @app.route("/", methods=["GET", "POST"])
-def upload_file():
+def index():
     resultado = ""
     if request.method == "POST":
-        if 'xmlfile' not in request.files:
-            resultado = "Nenhum arquivo enviado"
-            return render_template_string(HTML_FORM, resultado=resultado)
+        file = request.files.get("xmlfile")
+        if not file:
+            resultado = "Nenhum arquivo enviado."
+        else:
+            try:
+                tree = ET.parse(file)
+                root = tree.getroot()
+                pl = root.findtext(".//PatrimonioLiquido")
+                cota = root.findtext(".//Cota")
+                rent_mes = root.findtext(".//RentabMes")
 
-        file = request.files['xmlfile']
-        if file.filename == '':
-            resultado = "Arquivo inválido"
-            return render_template_string(HTML_FORM, resultado=resultado)
+                # Cálculo simples de VaR
+                pl_float = float(pl.replace(',', '.'))
+                rent_mes_float = float(rent_mes.replace(',', '.')) / 100
+                var_pct = round(rent_mes_float * 2.33 / (21**0.5) * 100, 2)
+                var_valor = round(pl_float * var_pct / 100, 2)
 
-        # Parseia o XML
-        tree = ET.parse(file)
-        root = tree.getroot()
-
-        # Busca os valores de PL, cota, rentabilidade etc.
-        pl = root.findtext('.//PatrimonioLiquido')
-        cota = root.findtext('.//Cota')
-        rent_dia = root.findtext('.//RentabDia')
-        rent_mes = root.findtext('.//RentabMes')
-        rent_ano = root.findtext('.//RentabAno')
-
-        # Cálculo simples de VaR (estimado)
-        try:
-            pl_float = float(pl.replace(',', '.'))
-            rent_mes_float = float(rent_mes.replace(',', '.')) / 100
-            var_pct = round(rent_mes_float * 2.33 / (21 ** 0.5) * 100, 4)
-            var_valor = round(pl_float * var_pct / 100, 2)
-        except:
-            var_pct = "Erro no cálculo"
-            var_valor = "Erro no cálculo"
-
-        resultado = f"""
+                resultado = f"""
 PL: R$ {pl}
 Cota: {cota}
-Rentabilidade Dia: {rent_dia}%
-Rentabilidade Mês: {rent_mes}%
-Rentabilidade Ano: {rent_ano}%
+Rentab Mês: {rent_mes}%
 
-📉 VaR (21 dias, 95%): {var_pct}% do PL
+📉 VaR estimado (21d, 95%): {var_pct}%
 Valor estimado do VaR: R$ {var_valor}
-
-📘 Modelo: Paramétrico Simples
-📘 Fatores de estresse fictícios simulados conforme cenário da B3.
 """
-
-    return render_template_string(HTML_FORM, resultado=resultado)
+            except Exception as e:
+                resultado = f"Erro ao ler XML: {str(e)}"
+    return render_template_string(FORM_HTML, resultado=resultado)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
 
-   
-
-
-
+          
