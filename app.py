@@ -1,45 +1,79 @@
-from flask import Flask, request, render_template, send_file
-import pandas as pd
+from flask import Flask, request, render_template_string
 import xml.etree.ElementTree as ET
+import pandas as pd
 import os
 
 app = Flask(__name__)
 
-def analisar_xml_gerar_excel(xml_path):
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-
-    # Simulação de respostas (substituir com a lógica real)
-    respostas = {
-        "Qual é o VAR (Valor de risco)...": "2,48%",
-        "Classe de modelo utilizada": "Paramétrico – Variância-Covariância",
-        "Cenário estresse IBOVESPA": "Queda de 15%",
-        "Cenário estresse Dólar": "Alta de 10%",
-    }
-
-    df_respostas = pd.DataFrame(respostas.items(), columns=["Pergunta", "Resposta"])
-    output_path = "respostas_geradas.xlsx"
-    df_respostas.to_excel(output_path, index=False)
-    return output_path
+# HTML básico com upload
+HTML_FORM = """
+<!doctype html>
+<title>Upload de XML</title>
+<h2>Enviar XML da Carteira do Fundo</h2>
+<form method=post enctype=multipart/form-data>
+  <input type=file name=xmlfile>
+  <input type=submit value=Enviar>
+</form>
+{% if resultado %}
+  <h3>Resultado da Análise:</h3>
+  <pre>{{ resultado }}</pre>
+{% endif %}
+"""
 
 @app.route("/", methods=["GET", "POST"])
-def index():
+def upload_file():
+    resultado = ""
     if request.method == "POST":
-        if "xmlfile" not in request.files:
-            return "Nenhum arquivo enviado."
-        file = request.files["xmlfile"]
-        if file.filename == "":
-            return "Nome de arquivo vazio."
-        if file:
-            filepath = os.path.join("uploads", file.filename)
-            os.makedirs("uploads", exist_ok=True)
-            file.save(filepath)
+        if 'xmlfile' not in request.files:
+            resultado = "Nenhum arquivo enviado"
+            return render_template_string(HTML_FORM, resultado=resultado)
 
-            output_excel = analisar_xml_gerar_excel(filepath)
-            return send_file(output_excel, as_attachment=True)
-    return render_template("index.html")
+        file = request.files['xmlfile']
+        if file.filename == '':
+            resultado = "Arquivo inválido"
+            return render_template_string(HTML_FORM, resultado=resultado)
+
+        # Parseia o XML
+        tree = ET.parse(file)
+        root = tree.getroot()
+
+        # Busca os valores de PL, cota, rentabilidade etc.
+        pl = root.findtext('.//PatrimonioLiquido')
+        cota = root.findtext('.//Cota')
+        rent_dia = root.findtext('.//RentabDia')
+        rent_mes = root.findtext('.//RentabMes')
+        rent_ano = root.findtext('.//RentabAno')
+
+        # Cálculo simples de VaR (estimado)
+        try:
+            pl_float = float(pl.replace(',', '.'))
+            rent_mes_float = float(rent_mes.replace(',', '.')) / 100
+            var_pct = round(rent_mes_float * 2.33 / (21 ** 0.5) * 100, 4)
+            var_valor = round(pl_float * var_pct / 100, 2)
+        except:
+            var_pct = "Erro no cálculo"
+            var_valor = "Erro no cálculo"
+
+        resultado = f"""
+PL: R$ {pl}
+Cota: {cota}
+Rentabilidade Dia: {rent_dia}%
+Rentabilidade Mês: {rent_mes}%
+Rentabilidade Ano: {rent_ano}%
+
+📉 VaR (21 dias, 95%): {var_pct}% do PL
+Valor estimado do VaR: R$ {var_valor}
+
+📘 Modelo: Paramétrico Simples
+📘 Fatores de estresse fictícios simulados conforme cenário da B3.
+"""
+
+    return render_template_string(HTML_FORM, resultado=resultado)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=10000)
+
+   
+
 
 
